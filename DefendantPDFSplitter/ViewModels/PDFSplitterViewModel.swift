@@ -15,6 +15,7 @@ final class PDFSplitterViewModel: ObservableObject {
 
     @Published var state: AppState = .idle
     @Published var pdfDocument: PDFDocument?
+    @Published var pdfURL: URL?
     @Published var pdfFilename: String = ""
     @Published var assignments: [PageAssignment] = []
     @Published var groups: [DefendantGroup] = []
@@ -23,6 +24,10 @@ final class PDFSplitterViewModel: ObservableObject {
     @Published var zipFileURL: URL?
     @Published var exportMessage: String = ""
     @Published var warningMessage: String = ""
+
+    /// Where the split_defendants_<name>/ folder will be written.
+    /// Defaults to the input PDF's parent directory; user can override via `chooseSaveLocation()`.
+    @Published var saveDestinationURL: URL?
 
     // OCR progress
     @Published var isDetecting: Bool = false
@@ -44,7 +49,10 @@ final class PDFSplitterViewModel: ObservableObject {
         }
 
         pdfDocument = document
+        pdfURL = url
         pdfFilename = url.lastPathComponent
+        // Default save destination to the PDF's containing folder.
+        saveDestinationURL = url.deletingLastPathComponent()
 
         assignments = (0..<document.pageCount).map { index in
             PageAssignment(pageIndex: index, suggestedName: "", defendantName: "")
@@ -56,6 +64,30 @@ final class PDFSplitterViewModel: ObservableObject {
         outputFolderURL = nil
         zipFileURL = nil
         groups = []
+    }
+
+    // MARK: - Save location
+
+    /// Show an NSOpenPanel to let the user pick a different save destination.
+    /// Returns true if the user picked a folder.
+    @discardableResult
+    func chooseSaveLocation() -> Bool {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Choose"
+        panel.message = "Choose where to save the split defendant PDFs"
+        if let current = saveDestinationURL {
+            panel.directoryURL = current
+        }
+
+        if panel.runModal() == .OK, let url = panel.url {
+            saveDestinationURL = url
+            return true
+        }
+        return false
     }
 
     // MARK: - Auto-detect names
@@ -199,6 +231,10 @@ final class PDFSplitterViewModel: ObservableObject {
 
     func performExport() {
         guard let document = pdfDocument else { return }
+        guard let destination = saveDestinationURL else {
+            state = .error("No save location selected.")
+            return
+        }
 
         state = .exporting
 
@@ -206,7 +242,8 @@ final class PDFSplitterViewModel: ObservableObject {
             let result = try PDFExporter.export(
                 document: document,
                 groups: groups,
-                originalFilename: pdfFilename
+                originalFilename: pdfFilename,
+                parentDirectory: destination
             )
 
             let zipURL = try ZipService.zipFolder(
@@ -236,7 +273,9 @@ final class PDFSplitterViewModel: ObservableObject {
     func reset() {
         state = .idle
         pdfDocument = nil
+        pdfURL = nil
         pdfFilename = ""
+        saveDestinationURL = nil
         assignments = []
         groups = []
         showExportSummary = false

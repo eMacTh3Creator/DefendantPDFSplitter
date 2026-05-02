@@ -64,17 +64,18 @@ struct PDFExporter {
     }
 
     /// Export grouped PDFs to an output folder.
+    /// `parentDirectory` is where the `split_defendants_<name>/` folder gets created.
+    /// Pass the input PDF's parent directory for the typical workflow.
     static func export(
         document: PDFDocument,
         groups: [DefendantGroup],
-        originalFilename: String
+        originalFilename: String,
+        parentDirectory: URL
     ) throws -> ExportResult {
         let baseName = (originalFilename as NSString).deletingPathExtension
         let folderName = "split_defendants_\(baseName)"
 
-        let desktopURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Desktop")
-        let outputURL = desktopURL.appendingPathComponent(folderName)
+        let outputURL = parentDirectory.appendingPathComponent(folderName)
 
         // Remove existing folder if present
         if FileManager.default.fileExists(atPath: outputURL.path) {

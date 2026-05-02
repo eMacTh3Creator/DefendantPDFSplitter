@@ -12,6 +12,9 @@ struct ContentView: View {
             ExportSummaryView(
                 groups: viewModel.groups,
                 totalPages: viewModel.pageCount,
+                originalFilename: viewModel.pdfFilename,
+                saveDestination: viewModel.saveDestinationURL,
+                onChooseLocation: { viewModel.chooseSaveLocation() },
                 onConfirm: { viewModel.performExport() },
                 onCancel: { viewModel.showExportSummary = false }
             )
