@@ -160,12 +160,16 @@ private struct PageRow: View {
             Text("\(assignment.pageNumber)")
                 .frame(width: 40, alignment: .center)
                 .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+                .onTapGesture { onSelect() }
 
             Text(assignment.suggestedName.isEmpty ? "—" : assignment.suggestedName)
                 .frame(minWidth: 140, alignment: .leading)
                 .foregroundStyle(assignment.suggestedName.isEmpty ? .tertiary : .secondary)
                 .font(.caption)
                 .padding(.leading, 8)
+                .contentShape(Rectangle())
+                .onTapGesture { onSelect() }
 
             TextField("Enter defendant name", text: $editedName)
                 .textFieldStyle(.roundedBorder)
@@ -175,6 +179,9 @@ private struct PageRow: View {
                 .onAppear { editedName = assignment.defendantName }
                 .onChange(of: editedName) { newValue in
                     onNameChange(newValue)
+                }
+                .onChange(of: isFocused) { focused in
+                    if focused { onSelect() }
                 }
                 .onSubmit {
                     onApplyDown()
@@ -191,6 +198,8 @@ private struct PageRow: View {
                 }
             }
             .frame(width: 30, alignment: .center)
+            .contentShape(Rectangle())
+            .onTapGesture { onSelect() }
 
             // Apply-down button
             Button(action: onApplyDown) {
@@ -205,7 +214,5 @@ private struct PageRow: View {
         .padding(.horizontal, 8)
         .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
         .cornerRadius(4)
-        .contentShape(Rectangle())
-        .onTapGesture { onSelect() }
     }
 }
