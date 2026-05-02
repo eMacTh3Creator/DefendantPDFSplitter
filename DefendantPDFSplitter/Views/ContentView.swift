@@ -30,6 +30,10 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 PageAssignmentTableView(viewModel: viewModel)
 
+                if viewModel.isDetecting {
+                    detectingBar
+                }
+
                 if !viewModel.warningMessage.isEmpty {
                     warningBar
                 }
@@ -47,6 +51,29 @@ struct ContentView: View {
         case .error(let message):
             errorView(message)
         }
+    }
+
+    private var detectingBar: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(viewModel.detectStatusText.isEmpty
+                     ? "Detecting defendant names..."
+                     : viewModel.detectStatusText)
+                    .font(.callout)
+                Spacer()
+                Text("\(Int(viewModel.detectProgress * 100))%")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            ProgressView(value: viewModel.detectProgress)
+                .progressViewStyle(.linear)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color.accentColor.opacity(0.08))
     }
 
     private var warningBar: some View {

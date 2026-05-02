@@ -24,6 +24,11 @@ final class PDFSplitterViewModel: ObservableObject {
     @Published var exportMessage: String = ""
     @Published var warningMessage: String = ""
 
+    // OCR progress
+    @Published var isDetecting: Bool = false
+    @Published var detectProgress: Double = 0.0   // 0.0 ... 1.0
+    @Published var detectStatusText: String = ""
+
     var pageCount: Int { pdfDocument?.pageCount ?? 0 }
 
     var unassignedPages: [Int] {
@@ -55,28 +60,100 @@ final class PDFSplitterViewModel: ObservableObject {
 
     // MARK: - Auto-detect names
 
+    /// Auto-detect defendant names. Tries PDFKit text extraction first; falls back to
+    /// Vision OCR for any page with no extractable text (typical for scanned court PDFs).
     func autoDetectNames() {
         guard let document = pdfDocument else { return }
 
+        let total = document.pageCount
+        isDetecting = true
+        detectProgress = 0.0
+        detectStatusText = "Reading PDF text..."
+        warningMessage = ""
+
+        // First pass on the main thread: PDFKit text extraction is cheap and synchronous.
         let pageTexts = PDFTextExtractor.extractAllPages(from: document)
+        var ocrNeeded: [Int] = []
         var detectedCount = 0
 
         for i in 0..<assignments.count {
-            guard let text = pageTexts[i] else { continue }
-            if let name = DefendantNameDetector.detectName(from: text) {
+            if let text = pageTexts[i],
+               let name = DefendantNameDetector.detectName(from: text) {
                 assignments[i].suggestedName = name
                 if !assignments[i].isEdited {
                     assignments[i].defendantName = name
                 }
                 detectedCount += 1
+            } else {
+                ocrNeeded.append(i)
             }
         }
 
-        if detectedCount == 0 {
-            warningMessage = "No defendant names could be auto-detected. This PDF may be scanned/image-based. Please enter names manually."
-        } else {
-            let total = assignments.count
+        // If PDFKit got everything we need, finish synchronously.
+        if ocrNeeded.isEmpty {
+            isDetecting = false
+            detectProgress = 1.0
+            detectStatusText = ""
             warningMessage = "Detected names on \(detectedCount) of \(total) pages. Review and edit as needed."
+            return
+        }
+
+        // Otherwise run OCR off the main thread.
+        let initialDetected = detectedCount
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+
+            let pagesToOCR: [(Int, PDFPage)] = await MainActor.run {
+                ocrNeeded.compactMap { idx in
+                    guard let page = document.page(at: idx) else { return nil }
+                    return (idx, page)
+                }
+            }
+
+            var ocrDetected = 0
+            for (count, item) in pagesToOCR.enumerated() {
+                let (pageIndex, page) = item
+
+                let progress = Double(count) / Double(pagesToOCR.count)
+                let statusText = "OCR page \(pageIndex + 1) of \(total)..."
+                await MainActor.run {
+                    self.detectProgress = progress
+                    self.detectStatusText = statusText
+                }
+
+                let detected: String? = {
+                    do {
+                        let text = try OCRService.extractText(from: page, pageIndex: pageIndex)
+                        return DefendantNameDetector.detectName(from: text)
+                    } catch {
+                        return nil
+                    }
+                }()
+
+                if let name = detected {
+                    await MainActor.run {
+                        if pageIndex < self.assignments.count {
+                            self.assignments[pageIndex].suggestedName = name
+                            if !self.assignments[pageIndex].isEdited {
+                                self.assignments[pageIndex].defendantName = name
+                            }
+                        }
+                    }
+                    ocrDetected += 1
+                }
+            }
+
+            await MainActor.run {
+                self.isDetecting = false
+                self.detectProgress = 1.0
+                self.detectStatusText = ""
+                let totalDetected = initialDetected + ocrDetected
+                if totalDetected == 0 {
+                    self.warningMessage = "No defendant names could be detected. Please review each page and enter names manually."
+                } else {
+                    self.warningMessage = "Detected names on \(totalDetected) of \(total) pages (OCR found \(ocrDetected)). Review and edit as needed."
+                }
+            }
         }
     }
 
@@ -167,6 +244,9 @@ final class PDFSplitterViewModel: ObservableObject {
         zipFileURL = nil
         exportMessage = ""
         warningMessage = ""
+        isDetecting = false
+        detectProgress = 0.0
+        detectStatusText = ""
     }
 
     // MARK: - Thumbnail

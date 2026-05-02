@@ -25,16 +25,17 @@ struct PageAssignmentTableView: View {
             Spacer()
 
             HStack(spacing: 8) {
-                Button("Auto Detect Names") {
+                Button(viewModel.isDetecting ? "Detecting..." : "Auto Detect Names") {
                     viewModel.autoDetectNames()
                 }
                 .buttonStyle(.bordered)
+                .disabled(viewModel.isDetecting)
 
                 Button("Export PDFs") {
                     viewModel.prepareExport()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(viewModel.state == .exporting)
+                .disabled(viewModel.state == .exporting || viewModel.isDetecting)
 
                 if viewModel.outputFolderURL != nil {
                     Button("Open Output Folder") {
@@ -113,33 +114,138 @@ struct PageAssignmentTableView: View {
     }
 
     private var thumbnailPreview: some View {
-        VStack {
-            if let index = selectedPageIndex,
-               let image = viewModel.thumbnail(for: index, size: CGSize(width: 400, height: 560)) {
-                Text("Page \(index + 1)")
-                    .font(.headline)
-                    .padding(.top, 8)
+        ZoomablePreview(
+            pageIndex: selectedPageIndex,
+            viewModel: viewModel
+        )
+    }
+}
 
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .border(Color.secondary.opacity(0.3), width: 1)
-                    .padding(8)
-                    .shadow(radius: 2)
+// MARK: - Zoomable Page Preview
 
-                Spacer()
+private struct ZoomablePreview: View {
+    let pageIndex: Int?
+    @ObservedObject var viewModel: PDFSplitterViewModel
+
+    @State private var zoom: CGFloat = 1.0
+    @State private var offset: CGSize = .zero
+    @State private var dragStart: CGSize = .zero
+    private let minZoom: CGFloat = 0.5
+    private let maxZoom: CGFloat = 5.0
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let index = pageIndex {
+                header(index: index)
+                Divider()
+                imageScroller(index: index)
             } else {
-                VStack(spacing: 8) {
-                    Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 32))
-                        .foregroundStyle(.secondary)
-                    Text("Select a page to preview")
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                emptyState
             }
         }
         .background(Color(nsColor: .controlBackgroundColor))
+        .onChange(of: pageIndex) { _ in
+            zoom = 1.0
+            offset = .zero
+        }
+    }
+
+    private func header(index: Int) -> some View {
+        HStack(spacing: 8) {
+            Text("Page \(index + 1)")
+                .font(.headline)
+
+            Spacer()
+
+            // Zoom controls
+            Button {
+                zoom = max(minZoom, zoom - 0.25)
+            } label: {
+                Image(systemName: "minus.magnifyingglass")
+            }
+            .buttonStyle(.borderless)
+            .help("Zoom out")
+            .disabled(zoom <= minZoom)
+
+            Text("\(Int(zoom * 100))%")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .frame(width: 44)
+
+            Button {
+                zoom = min(maxZoom, zoom + 0.25)
+            } label: {
+                Image(systemName: "plus.magnifyingglass")
+            }
+            .buttonStyle(.borderless)
+            .help("Zoom in")
+            .disabled(zoom >= maxZoom)
+
+            Button {
+                zoom = 1.0
+                offset = .zero
+            } label: {
+                Image(systemName: "1.magnifyingglass")
+            }
+            .buttonStyle(.borderless)
+            .help("Reset zoom")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private func imageScroller(index: Int) -> some View {
+        // Render at higher resolution as zoom grows so the OCR text stays legible.
+        let baseSize = CGSize(width: 800, height: 1100)
+        let renderScale = max(1.0, zoom)
+        let renderSize = CGSize(
+            width: baseSize.width * renderScale,
+            height: baseSize.height * renderScale
+        )
+
+        if let image = viewModel.thumbnail(for: index, size: renderSize) {
+            ScrollView([.vertical, .horizontal], showsIndicators: true) {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 380 * zoom, height: 520 * zoom)
+                    .border(Color.secondary.opacity(0.3), width: 1)
+                    .shadow(radius: 2)
+                    .padding(8)
+                    .gesture(
+                        // Two-finger pinch / trackpad pinch
+                        MagnificationGesture()
+                            .onChanged { scale in
+                                let proposed = zoom * scale
+                                zoom = min(maxZoom, max(minZoom, proposed))
+                            }
+                    )
+                    .onTapGesture(count: 2) {
+                        // Double-click toggles between fit and 2x
+                        zoom = (zoom >= 1.5) ? 1.0 : 2.0
+                    }
+            }
+            .background(Color(nsColor: .windowBackgroundColor))
+        } else {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 32))
+                .foregroundStyle(.secondary)
+            Text("Select a page to preview")
+                .foregroundStyle(.secondary)
+            Text("Double-click image to zoom · pinch to scale")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

@@ -9,8 +9,9 @@ struct DefendantNameDetector {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
 
-        // Strategy 1: Look for explicit "Defendant/Respondent" label on the same line
-        if let name = extractFromDefendantLabel(lines: lines) {
+        // Strategy 1: Look for "Defendant/Respondent: Name" inline (handles both
+        // right-of-label and left-of-label multi-column layouts)
+        if let name = extractFromInlineLabel(lines: lines) {
             return name
         }
 
@@ -20,11 +21,134 @@ struct DefendantNameDetector {
         }
 
         // Strategy 3: Look for name near "Defendant" or "Respondent" keywords
+        // (line above/below — used for multi-line layouts)
         if let name = extractNearDefendantKeyword(lines: lines) {
             return name
         }
 
         return nil
+    }
+
+    /// Pennsylvania Municipal Court / similar layouts put each field as
+    /// "Label: Value" — but multi-column scans get OCR'd left-to-right into a
+    /// single line, so we need to look BOTH for "Defendant/Respondent: Name"
+    /// (right-of-label) AND "Name ... Defendant/Respondent ..." (left-of-label,
+    /// where the name is in a left column and the label is in a middle column).
+    private static func extractFromInlineLabel(lines: [String]) -> String? {
+        // Detector for the literal Defendant/Respondent (or Respondent/Defendant) label.
+        // Treats slashes, colons, dashes, and OCR'd "DefendantRespondent" (no slash) the same.
+        let labelRegex = try? NSRegularExpression(
+            pattern: "(?i)\\b(defendant\\s*/?\\s*respondent|respondent\\s*/?\\s*defendant)\\b"
+        )
+        guard let labelRegex else { return nil }
+
+        // Lines containing the document-type list we want to ignore.
+        let docTypeKeywords = [
+            "summons", "complaint", "verification", "exhibits",
+            "affidavit", "statement of claim", "non-service", "of service"
+        ]
+
+        for line in lines {
+            let nsLine = line as NSString
+            let range = NSRange(location: 0, length: nsLine.length)
+            guard let match = labelRegex.firstMatch(in: line, range: range) else { continue }
+
+            let labelStart = match.range.location
+            let labelEnd = match.range.location + match.range.length
+
+            // Try AFTER the label: "Defendant/Respondent: Name"
+            if labelEnd < nsLine.length {
+                let after = nsLine.substring(from: labelEnd)
+                if let name = pickFirstNameSegment(from: after, docTypeKeywords: docTypeKeywords) {
+                    return name
+                }
+            }
+
+            // Try BEFORE the label: "Name   Defendant/Respondent  ..."
+            if labelStart > 0 {
+                let before = nsLine.substring(with: NSRange(location: 0, length: labelStart))
+                if let name = pickLastNameSegment(from: before, docTypeKeywords: docTypeKeywords) {
+                    return name
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Pick the first plausible name from the start of `text` (used for after-label).
+    /// Stops at the first occurrence of another label or document-type keyword.
+    private static func pickFirstNameSegment(from text: String, docTypeKeywords: [String]) -> String? {
+        let trimmed = text
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ":-")))
+
+        // Cut at any other label keyword we recognize
+        let cutMarkers = ["plaintiff", "petitioner", "case no", "case number", "hearing", "address"]
+            + docTypeKeywords
+
+        var slice = trimmed
+        let lower = slice.lowercased()
+        for marker in cutMarkers {
+            if let r = lower.range(of: marker) {
+                let cutAt = lower.distance(from: lower.startIndex, to: r.lowerBound)
+                let idx = slice.index(slice.startIndex, offsetBy: cutAt)
+                slice = String(slice[..<idx])
+                break
+            }
+        }
+
+        slice = slice.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Reject if the slice itself is a doc-type list
+        let sliceLower = slice.lowercased()
+        if docTypeKeywords.contains(where: { sliceLower.hasPrefix($0) }) { return nil }
+
+        return isPlausibleName(slice) ? cleanName(slice) : nil
+    }
+
+    /// Pick the last plausible name from the end of `text` (used for before-label).
+    /// In the multi-column layout, the defendant name is at the left edge of the
+    /// line, but if there's other text on that line, we want the rightmost name-like chunk.
+    private static func pickLastNameSegment(from text: String, docTypeKeywords: [String]) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        // Drop everything before known left-column labels
+        let leftCutMarkers = ["plaintiff/petitioner", "petitioner", "plaintiff", "case no"]
+        var slice = trimmed
+        let lower = slice.lowercased()
+        for marker in leftCutMarkers {
+            if let r = lower.range(of: marker) {
+                let cutAt = lower.distance(from: lower.startIndex, to: r.upperBound)
+                let idx = slice.index(slice.startIndex, offsetBy: cutAt)
+                slice = String(slice[idx...])
+                break
+            }
+        }
+
+        slice = slice
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ":-,")))
+
+        // The remaining text is something like "Tonya Mitchell" or "JPMorgan Chase Bank N.A.   Tonya Mitchell".
+        // Take the last 2–4 words (typical name length); if it still looks plausible, use it.
+        let words = slice.split(whereSeparator: { $0.isWhitespace })
+        guard !words.isEmpty else { return nil }
+
+        // Try several tail lengths — names are usually 2–4 words
+        for n in [4, 3, 2] {
+            guard words.count >= n else { continue }
+            let candidate = words.suffix(n).joined(separator: " ")
+            let candLower = candidate.lowercased()
+
+            // Reject doc-type fragments
+            if docTypeKeywords.contains(where: { candLower.contains($0) }) { continue }
+
+            if isPlausibleName(candidate) {
+                return cleanName(candidate)
+            }
+        }
+
+        // Fallback: try the whole slice
+        return isPlausibleName(slice) ? cleanName(slice) : nil
     }
 
     // MARK: - Detection strategies
