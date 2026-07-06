@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://emacth3creator.github.io/DefendantPDFSplitter/">Website</a> ·
-  <a href="https://github.com/eMacTh3Creator/DefendantPDFSplitter/releases/latest">Download latest release</a>
+  <a href="https://github.com/eMacTh3Creator/DefendantPDFSplitter/releases/latest/download/DefendantPDFSplitter.zip">Download latest release</a>
 </p>
 
 <p align="center">
@@ -44,7 +44,7 @@ Court systems often deliver service packets as a single scanned PDF containing p
 
 ### Download
 
-Grab the latest `.zip` from [Releases](https://github.com/eMacTh3Creator/DefendantPDFSplitter/releases), unzip, and drag **DefendantPDFSplitter.app** to `/Applications`.
+Grab the [latest `.zip`](https://github.com/eMacTh3Creator/DefendantPDFSplitter/releases/latest/download/DefendantPDFSplitter.zip), unzip, and drag **DefendantPDFSplitter.app** to `/Applications`.
 
 The app is ad-hoc signed, so on first launch right-click → **Open** to bypass Gatekeeper. If macOS still blocks it, clear the quarantine flag:
 
