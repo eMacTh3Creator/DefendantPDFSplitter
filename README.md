@@ -10,6 +10,11 @@
 </p>
 
 <p align="center">
+  <a href="https://emacth3creator.github.io/DefendantPDFSplitter/">Website</a> ·
+  <a href="https://github.com/eMacTh3Creator/DefendantPDFSplitter/releases/latest">Download latest release</a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/macOS-13%2B-blue" alt="macOS 13+">
   <img src="https://img.shields.io/badge/Swift-5-orange" alt="Swift 5">
   <img src="https://img.shields.io/badge/SwiftUI-PDFKit-purple" alt="SwiftUI + PDFKit">
