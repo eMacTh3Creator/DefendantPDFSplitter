@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct PageAssignmentTableView: View {
     @ObservedObject var viewModel: PDFSplitterViewModel
@@ -280,9 +281,6 @@ private struct PageRow: View {
 
     @State private var editedName: String = ""
     @State private var editedCaseNumber: String = ""
-    @FocusState private var isFocused: Bool
-    @FocusState private var isCaseNumberFocused: Bool
-
     var body: some View {
         HStack(spacing: 0) {
             Text("\(assignment.pageNumber)")
@@ -312,11 +310,14 @@ private struct PageRow: View {
             .frame(minWidth: 140, alignment: .leading)
             .padding(.leading, 8)
 
-            TextField("Enter defendant name", text: $editedName)
-                .textFieldStyle(.roundedBorder)
-                .frame(minWidth: 190)
+            ScrollingTextField(
+                "Enter defendant name",
+                text: $editedName,
+                onEditingBegan: onSelect,
+                onSubmit: onApplyDown
+            )
+                .frame(minWidth: 190, minHeight: 22)
                 .padding(.leading, 8)
-                .focused($isFocused)
                 .onAppear { editedName = assignment.defendantName }
                 .onChange(of: editedName) { newValue in
                     onNameChange(newValue)
@@ -326,18 +327,15 @@ private struct PageRow: View {
                         editedName = newValue
                     }
                 }
-                .onChange(of: isFocused) { focused in
-                    if focused { onSelect() }
-                }
-                .onSubmit {
-                    onApplyDown()
-                }
 
-            TextField("Optional", text: $editedCaseNumber)
-                .textFieldStyle(.roundedBorder)
-                .frame(minWidth: 130)
+            ScrollingTextField(
+                "Optional",
+                text: $editedCaseNumber,
+                onEditingBegan: onSelect,
+                onSubmit: onApplyDown
+            )
+                .frame(minWidth: 130, minHeight: 22)
                 .padding(.leading, 8)
-                .focused($isCaseNumberFocused)
                 .onAppear { editedCaseNumber = assignment.caseNumber }
                 .onChange(of: editedCaseNumber) { newValue in
                     onCaseNumberChange(newValue)
@@ -346,12 +344,6 @@ private struct PageRow: View {
                     if newValue != editedCaseNumber {
                         editedCaseNumber = newValue
                     }
-                }
-                .onChange(of: isCaseNumberFocused) { focused in
-                    if focused { onSelect() }
-                }
-                .onSubmit {
-                    onApplyDown()
                 }
 
             // Status indicator
@@ -381,5 +373,159 @@ private struct PageRow: View {
         .padding(.horizontal, 8)
         .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
         .cornerRadius(4)
+    }
+}
+
+// MARK: - Scrolling Text Field
+
+private struct ScrollingTextField: NSViewRepresentable {
+    @Binding var text: String
+
+    let placeholder: String
+    let onEditingBegan: () -> Void
+    let onSubmit: () -> Void
+
+    init(
+        _ placeholder: String,
+        text: Binding<String>,
+        onEditingBegan: @escaping () -> Void = {},
+        onSubmit: @escaping () -> Void = {}
+    ) {
+        self.placeholder = placeholder
+        _text = text
+        self.onEditingBegan = onEditingBegan
+        self.onSubmit = onSubmit
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(
+            text: $text,
+            onEditingBegan: onEditingBegan,
+            onSubmit: onSubmit
+        )
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let textField = NSTextField()
+        textField.delegate = context.coordinator
+        textField.placeholderString = placeholder
+        textField.stringValue = text
+        configure(textField)
+        return textField
+    }
+
+    func updateNSView(_ textField: NSTextField, context: Context) {
+        context.coordinator.text = $text
+        context.coordinator.onEditingBegan = onEditingBegan
+        context.coordinator.onSubmit = onSubmit
+
+        if textField.placeholderString != placeholder {
+            textField.placeholderString = placeholder
+        }
+
+        if !context.coordinator.isEditing && textField.stringValue != text {
+            textField.stringValue = text
+        }
+
+        configure(textField)
+        context.coordinator.scrollSelectionIntoView(in: textField)
+    }
+
+    private func configure(_ textField: NSTextField) {
+        textField.isEditable = true
+        textField.isSelectable = true
+        textField.isBordered = true
+        textField.isBezeled = true
+        textField.bezelStyle = .roundedBezel
+        textField.drawsBackground = true
+        textField.usesSingleLineMode = true
+        textField.maximumNumberOfLines = 1
+        textField.lineBreakMode = .byClipping
+        textField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        if let cell = textField.cell as? NSTextFieldCell {
+            cell.usesSingleLineMode = true
+            cell.isScrollable = true
+            cell.wraps = false
+            cell.lineBreakMode = .byClipping
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var text: Binding<String>
+        var onEditingBegan: () -> Void
+        var onSubmit: () -> Void
+        var isEditing = false
+
+        init(
+            text: Binding<String>,
+            onEditingBegan: @escaping () -> Void,
+            onSubmit: @escaping () -> Void
+        ) {
+            self.text = text
+            self.onEditingBegan = onEditingBegan
+            self.onSubmit = onSubmit
+        }
+
+        func controlTextDidBeginEditing(_ notification: Notification) {
+            isEditing = true
+            onEditingBegan()
+
+            guard let textField = notification.object as? NSTextField else { return }
+            scrollSelectionIntoView(in: textField)
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let textField = notification.object as? NSTextField else { return }
+
+            if let editor = textField.currentEditor() {
+                if text.wrappedValue != editor.string {
+                    text.wrappedValue = editor.string
+                }
+            } else if text.wrappedValue != textField.stringValue {
+                text.wrappedValue = textField.stringValue
+            }
+
+            scrollSelectionIntoView(in: textField)
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            isEditing = false
+
+            guard let textField = notification.object as? NSTextField else { return }
+            if text.wrappedValue != textField.stringValue {
+                text.wrappedValue = textField.stringValue
+            }
+            scrollSelectionIntoView(in: textField)
+        }
+
+        func control(
+            _ control: NSControl,
+            textView: NSTextView,
+            doCommandBy commandSelector: Selector
+        ) -> Bool {
+            guard commandSelector == #selector(NSResponder.insertNewline(_:)) else {
+                return false
+            }
+
+            text.wrappedValue = textView.string
+            if let textField = control as? NSTextField {
+                textField.stringValue = textView.string
+                scrollSelectionIntoView(in: textField)
+            }
+            onSubmit()
+            return true
+        }
+
+        func scrollSelectionIntoView(in textField: NSTextField) {
+            DispatchQueue.main.async { [weak textField] in
+                guard let textField,
+                      let editor = textField.currentEditor() as? NSTextView
+                else { return }
+
+                editor.scrollRangeToVisible(editor.selectedRange())
+            }
+        }
     }
 }
