@@ -9,32 +9,40 @@ struct PDFExporter {
         let totalPages: Int
     }
 
-    /// Group consecutive pages with the same defendant name into DefendantGroup objects.
-    /// Same defendant on consecutive pages = one group.
+    /// Group consecutive pages with the same defendant name and compatible case number into DefendantGroup objects.
+    /// Same defendant/case on consecutive pages = one group.
     /// Same defendant appearing non-consecutively = separate groups with numbered filenames.
     static func buildGroups(from assignments: [PageAssignment]) -> [DefendantGroup] {
         guard !assignments.isEmpty else { return [] }
 
         var groups: [DefendantGroup] = []
         var currentName = assignments[0].defendantName.trimmingCharacters(in: .whitespaces)
+        var currentCaseNumber = assignments[0].caseNumber.trimmingCharacters(in: .whitespaces)
         var currentPages = [assignments[0].pageIndex]
 
         for i in 1..<assignments.count {
             let name = assignments[i].defendantName.trimmingCharacters(in: .whitespaces)
-            if name == currentName {
+            let caseNumber = assignments[i].caseNumber.trimmingCharacters(in: .whitespaces)
+            if name == currentName && caseNumbersCanBeGrouped(currentCaseNumber, caseNumber) {
                 currentPages.append(assignments[i].pageIndex)
+                if currentCaseNumber.isEmpty {
+                    currentCaseNumber = caseNumber
+                }
             } else {
                 groups.append(DefendantGroup(
                     defendantName: currentName,
+                    caseNumber: currentCaseNumber,
                     pageIndices: currentPages,
                     filename: ""
                 ))
                 currentName = name
+                currentCaseNumber = caseNumber
                 currentPages = [assignments[i].pageIndex]
             }
         }
         groups.append(DefendantGroup(
             defendantName: currentName,
+            caseNumber: currentCaseNumber,
             pageIndices: currentPages,
             filename: ""
         ))
@@ -42,20 +50,34 @@ struct PDFExporter {
         return assignFilenames(to: groups)
     }
 
-    /// Assign filenames, handling duplicates with " - 2", " - 3", etc.
+    /// Assign filenames, appending case numbers for repeated defendant names when available.
     private static func assignFilenames(to groups: [DefendantGroup]) -> [DefendantGroup] {
-        var nameCount: [String: Int] = [:]
+        var defendantNameCounts: [String: Int] = [:]
+        for group in groups {
+            let sanitizedName = sanitizeFilename(group.defendantName)
+            defendantNameCounts[sanitizedName, default: 0] += 1
+        }
+
+        var filenameCount: [String: Int] = [:]
         var result: [DefendantGroup] = []
 
         for var group in groups {
             let sanitized = sanitizeFilename(group.defendantName)
-            nameCount[sanitized, default: 0] += 1
-            let count = nameCount[sanitized]!
+            let caseComponent = sanitizeFilenameIdentifier(group.caseNumber)
+            let baseName: String
+            if defendantNameCounts[sanitized, default: 0] > 1 && !caseComponent.isEmpty {
+                baseName = "\(sanitized) - \(caseComponent)"
+            } else {
+                baseName = sanitized
+            }
+
+            filenameCount[baseName, default: 0] += 1
+            let count = filenameCount[baseName]!
 
             if count == 1 {
-                group.filename = "\(sanitized).pdf"
+                group.filename = "\(baseName).pdf"
             } else {
-                group.filename = "\(sanitized) - \(count).pdf"
+                group.filename = "\(baseName) - \(count).pdf"
             }
             result.append(group)
         }
@@ -118,6 +140,35 @@ struct PDFExporter {
         let sanitized = String(String.UnicodeScalarView(components))
             .trimmingCharacters(in: .whitespaces)
         return sanitized.isEmpty ? "Unknown" : sanitized
+    }
+
+    private static func caseNumbersCanBeGrouped(_ lhs: String, _ rhs: String) -> Bool {
+        let left = normalizedCaseNumber(lhs)
+        let right = normalizedCaseNumber(rhs)
+        return left.isEmpty || right.isEmpty || left == right
+    }
+
+    private static func normalizedCaseNumber(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .uppercased()
+    }
+
+    private static func sanitizeFilenameIdentifier(_ identifier: String) -> String {
+        let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        let invalidChars = CharacterSet(charactersIn: "/\\:*?\"<>|")
+        let scalars = trimmed.unicodeScalars.map { scalar -> UnicodeScalar in
+            invalidChars.contains(scalar) ? "-" : scalar
+        }
+        let sanitized = String(String.UnicodeScalarView(scalars))
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "-+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "-.")))
+
+        return sanitized
     }
 
     enum ExportError: LocalizedError {

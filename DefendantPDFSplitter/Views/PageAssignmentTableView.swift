@@ -25,11 +25,20 @@ struct PageAssignmentTableView: View {
             Spacer()
 
             HStack(spacing: 8) {
-                Button(viewModel.isDetecting ? "Detecting..." : "Auto Detect Names") {
+                Button(viewModel.isDetecting ? "Detecting..." : "Auto Detect Fields") {
                     viewModel.autoDetectNames()
                 }
                 .buttonStyle(.bordered)
                 .disabled(viewModel.isDetecting)
+
+                Button {
+                    viewModel.fillSuggestedDefendantNames()
+                } label: {
+                    Label("Fill Suggestions", systemImage: "arrow.right.circle")
+                }
+                .buttonStyle(.bordered)
+                .disabled(viewModel.isDetecting || !viewModel.hasSuggestedDefendantNamesToFill)
+                .help("Fill blank defendant names from detected suggestions")
 
                 Button("Export PDFs") {
                     viewModel.prepareExport()
@@ -58,7 +67,7 @@ struct PageAssignmentTableView: View {
         HSplitView {
             // Left: page list
             pageList
-                .frame(minWidth: 500)
+                .frame(minWidth: 650)
 
             // Right: page thumbnail preview
             thumbnailPreview
@@ -77,6 +86,9 @@ struct PageAssignmentTableView: View {
                     .padding(.leading, 8)
                 Text("Defendant Name")
                     .frame(minWidth: 200, alignment: .leading)
+                    .padding(.leading, 8)
+                Text("Case Number")
+                    .frame(minWidth: 140, alignment: .leading)
                     .padding(.leading, 8)
                 Text("Status")
                     .frame(width: 80, alignment: .center)
@@ -98,6 +110,12 @@ struct PageAssignmentTableView: View {
                         isSelected: selectedPageIndex == index,
                         onNameChange: { name in
                             viewModel.updateDefendantName(for: assignment.id, name: name)
+                        },
+                        onUseSuggestedName: {
+                            viewModel.useSuggestedDefendantName(for: assignment.id)
+                        },
+                        onCaseNumberChange: { caseNumber in
+                            viewModel.updateCaseNumber(for: assignment.id, caseNumber: caseNumber)
                         },
                         onApplyDown: {
                             viewModel.applyNameToFollowingBlanks(from: index)
@@ -255,11 +273,15 @@ private struct PageRow: View {
     let assignment: PageAssignment
     let isSelected: Bool
     let onNameChange: (String) -> Void
+    let onUseSuggestedName: () -> Void
+    let onCaseNumberChange: (String) -> Void
     let onApplyDown: () -> Void
     let onSelect: () -> Void
 
     @State private var editedName: String = ""
+    @State private var editedCaseNumber: String = ""
     @FocusState private var isFocused: Bool
+    @FocusState private var isCaseNumberFocused: Bool
 
     var body: some View {
         HStack(spacing: 0) {
@@ -269,13 +291,26 @@ private struct PageRow: View {
                 .contentShape(Rectangle())
                 .onTapGesture { onSelect() }
 
-            Text(assignment.suggestedName.isEmpty ? "—" : assignment.suggestedName)
-                .frame(minWidth: 140, alignment: .leading)
-                .foregroundStyle(assignment.suggestedName.isEmpty ? .tertiary : .secondary)
-                .font(.caption)
-                .padding(.leading, 8)
-                .contentShape(Rectangle())
-                .onTapGesture { onSelect() }
+            HStack(spacing: 4) {
+                Text(assignment.suggestedName.isEmpty ? "—" : assignment.suggestedName)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .foregroundStyle(assignment.suggestedName.isEmpty ? .tertiary : .secondary)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .contentShape(Rectangle())
+                    .onTapGesture { onSelect() }
+
+                Button(action: onUseSuggestedName) {
+                    Image(systemName: "arrow.right.circle")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .help("Use suggested defendant name")
+                .disabled(assignment.suggestedName.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .frame(minWidth: 140, alignment: .leading)
+            .padding(.leading, 8)
 
             TextField("Enter defendant name", text: $editedName)
                 .textFieldStyle(.roundedBorder)
@@ -286,7 +321,33 @@ private struct PageRow: View {
                 .onChange(of: editedName) { newValue in
                     onNameChange(newValue)
                 }
+                .onChange(of: assignment.defendantName) { newValue in
+                    if newValue != editedName {
+                        editedName = newValue
+                    }
+                }
                 .onChange(of: isFocused) { focused in
+                    if focused { onSelect() }
+                }
+                .onSubmit {
+                    onApplyDown()
+                }
+
+            TextField("Optional", text: $editedCaseNumber)
+                .textFieldStyle(.roundedBorder)
+                .frame(minWidth: 130)
+                .padding(.leading, 8)
+                .focused($isCaseNumberFocused)
+                .onAppear { editedCaseNumber = assignment.caseNumber }
+                .onChange(of: editedCaseNumber) { newValue in
+                    onCaseNumberChange(newValue)
+                }
+                .onChange(of: assignment.caseNumber) { newValue in
+                    if newValue != editedCaseNumber {
+                        editedCaseNumber = newValue
+                    }
+                }
+                .onChange(of: isCaseNumberFocused) { focused in
                     if focused { onSelect() }
                 }
                 .onSubmit {

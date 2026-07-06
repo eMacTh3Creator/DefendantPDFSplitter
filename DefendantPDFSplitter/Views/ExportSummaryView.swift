@@ -42,6 +42,11 @@ struct ExportSummaryView: View {
                                 Text(group.pageRange)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                if !group.caseNumber.isEmpty {
+                                    Text("Case \(group.caseNumber)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
 
                             Spacer()

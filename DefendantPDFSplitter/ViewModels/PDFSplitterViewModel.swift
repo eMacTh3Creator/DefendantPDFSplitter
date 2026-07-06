@@ -40,6 +40,13 @@ final class PDFSplitterViewModel: ObservableObject {
         assignments.filter { !$0.hasName }.map { $0.pageNumber }
     }
 
+    var hasSuggestedDefendantNamesToFill: Bool {
+        assignments.contains { assignment in
+            !assignment.suggestedName.trimmingCharacters(in: .whitespaces).isEmpty
+                && assignment.defendantName.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+    }
+
     // MARK: - Load PDF
 
     func loadPDF(from url: URL) {
@@ -90,9 +97,9 @@ final class PDFSplitterViewModel: ObservableObject {
         return false
     }
 
-    // MARK: - Auto-detect names
+    // MARK: - Auto-detect fields
 
-    /// Auto-detect defendant names. Tries PDFKit text extraction first; falls back to
+    /// Auto-detect defendant names and case numbers. Tries PDFKit text extraction first; falls back to
     /// Vision OCR for any page with no extractable text (typical for scanned court PDFs).
     func autoDetectNames() {
         guard let document = pdfDocument else { return }
@@ -109,13 +116,28 @@ final class PDFSplitterViewModel: ObservableObject {
         var detectedCount = 0
 
         for i in 0..<assignments.count {
-            if let text = pageTexts[i],
-               let name = DefendantNameDetector.detectName(from: text) {
-                assignments[i].suggestedName = name
-                if !assignments[i].isEdited {
-                    assignments[i].defendantName = name
+            if let text = pageTexts[i] {
+                let name = DefendantNameDetector.detectName(from: text)
+                let caseNumber = DefendantNameDetector.detectCaseNumber(from: text)
+
+                if let name {
+                    assignments[i].suggestedName = name
+                    if !assignments[i].isEdited {
+                        assignments[i].defendantName = name
+                    }
+                    detectedCount += 1
                 }
-                detectedCount += 1
+
+                if let caseNumber {
+                    assignments[i].suggestedCaseNumber = caseNumber
+                    if !assignments[i].isCaseNumberEdited {
+                        assignments[i].caseNumber = caseNumber
+                    }
+                }
+
+                if name == nil {
+                    ocrNeeded.append(i)
+                }
             } else {
                 ocrNeeded.append(i)
             }
@@ -153,37 +175,50 @@ final class PDFSplitterViewModel: ObservableObject {
                     self.detectStatusText = statusText
                 }
 
-                let detected: String? = {
+                let detected: (name: String?, caseNumber: String?)? = {
                     do {
                         let text = try OCRService.extractText(from: page, pageIndex: pageIndex)
-                        return DefendantNameDetector.detectName(from: text)
+                        let name = DefendantNameDetector.detectName(from: text)
+                        let caseNumber = DefendantNameDetector.detectCaseNumber(from: text)
+                        return (name: name, caseNumber: caseNumber)
                     } catch {
                         return nil
                     }
                 }()
 
-                if let name = detected {
+                if let detected {
                     await MainActor.run {
                         if pageIndex < self.assignments.count {
-                            self.assignments[pageIndex].suggestedName = name
-                            if !self.assignments[pageIndex].isEdited {
-                                self.assignments[pageIndex].defendantName = name
+                            if let name = detected.name {
+                                self.assignments[pageIndex].suggestedName = name
+                                if !self.assignments[pageIndex].isEdited {
+                                    self.assignments[pageIndex].defendantName = name
+                                }
+                            }
+                            if let caseNumber = detected.caseNumber {
+                                self.assignments[pageIndex].suggestedCaseNumber = caseNumber
+                                if !self.assignments[pageIndex].isCaseNumberEdited {
+                                    self.assignments[pageIndex].caseNumber = caseNumber
+                                }
                             }
                         }
                     }
-                    ocrDetected += 1
+                    if detected.name != nil {
+                        ocrDetected += 1
+                    }
                 }
             }
 
+            let finalOCRDetected = ocrDetected
             await MainActor.run {
                 self.isDetecting = false
                 self.detectProgress = 1.0
                 self.detectStatusText = ""
-                let totalDetected = initialDetected + ocrDetected
+                let totalDetected = initialDetected + finalOCRDetected
                 if totalDetected == 0 {
                     self.warningMessage = "No defendant names could be detected. Please review each page and enter names manually."
                 } else {
-                    self.warningMessage = "Detected names on \(totalDetected) of \(total) pages (OCR found \(ocrDetected)). Review and edit as needed."
+                    self.warningMessage = "Detected names on \(totalDetected) of \(total) pages (OCR found \(finalOCRDetected)). Review and edit as needed."
                 }
             }
         }
@@ -197,20 +232,65 @@ final class PDFSplitterViewModel: ObservableObject {
         assignments[index].isEdited = true
     }
 
+    func updateCaseNumber(for id: UUID, caseNumber: String) {
+        guard let index = assignments.firstIndex(where: { $0.id == id }) else { return }
+        assignments[index].caseNumber = caseNumber
+        assignments[index].isCaseNumberEdited = true
+    }
+
+    func useSuggestedDefendantName(for id: UUID) {
+        guard let index = assignments.firstIndex(where: { $0.id == id }) else { return }
+        let suggestedName = assignments[index].suggestedName.trimmingCharacters(in: .whitespaces)
+        guard !suggestedName.isEmpty else { return }
+
+        assignments[index].defendantName = suggestedName
+        assignments[index].isEdited = true
+    }
+
+    func fillSuggestedDefendantNames() {
+        for index in assignments.indices {
+            let suggestedName = assignments[index].suggestedName.trimmingCharacters(in: .whitespaces)
+            let currentName = assignments[index].defendantName.trimmingCharacters(in: .whitespaces)
+            guard !suggestedName.isEmpty, currentName.isEmpty else { continue }
+
+            assignments[index].defendantName = suggestedName
+            assignments[index].isEdited = true
+        }
+    }
+
     // MARK: - Apply name to subsequent blank pages
 
     func applyNameToFollowingBlanks(from index: Int) {
         guard index < assignments.count else { return }
         let name = assignments[index].defendantName
+        let caseNumber = assignments[index].caseNumber
         guard !name.isEmpty else { return }
 
         for i in (index + 1)..<assignments.count {
-            if assignments[i].defendantName.isEmpty {
-                assignments[i].defendantName = name
-            } else {
+            let nextName = assignments[i].defendantName.trimmingCharacters(in: .whitespaces)
+            let nextCaseNumber = assignments[i].caseNumber.trimmingCharacters(in: .whitespaces)
+            if !nextName.isEmpty || hasDifferentKnownCaseNumber(caseNumber, nextCaseNumber) {
                 break
             }
+
+            assignments[i].defendantName = name
+            if nextCaseNumber.isEmpty {
+                assignments[i].caseNumber = caseNumber
+            }
         }
+    }
+
+    private func hasDifferentKnownCaseNumber(_ lhs: String, _ rhs: String) -> Bool {
+        let left = lhs
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .uppercased()
+        let right = rhs
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .uppercased()
+
+        return !left.isEmpty && !right.isEmpty && left != right
     }
 
     // MARK: - Export

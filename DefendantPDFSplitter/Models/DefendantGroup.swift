@@ -3,6 +3,7 @@ import Foundation
 struct DefendantGroup: Identifiable {
     let id = UUID()
     let defendantName: String
+    let caseNumber: String
     let pageIndices: [Int]
     var filename: String
 

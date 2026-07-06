@@ -29,6 +29,44 @@ struct DefendantNameDetector {
         return nil
     }
 
+    /// Attempt to detect a court case or docket number from page text.
+    static func detectCaseNumber(from text: String) -> String? {
+        let lines = text.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        return extractCaseNumberFromLabel(lines: lines)
+    }
+
+    private static func extractCaseNumberFromLabel(lines: [String]) -> String? {
+        let labelRegex = try? NSRegularExpression(
+            pattern: #"(?i)\b(?:case\s*(?:no\.?|number(?:\(s\))?|num\.?|#|id)|docket\s*(?:no\.?|number(?:\(s\))?|#|id)?|civil\s*action\s*(?:no\.?|number|#))\.?\s*[:#-]?"#
+        )
+        guard let labelRegex else { return nil }
+
+        for (index, line) in lines.enumerated() {
+            let nsLine = line as NSString
+            let range = NSRange(location: 0, length: nsLine.length)
+            guard let match = labelRegex.firstMatch(in: line, range: range) else { continue }
+
+            let labelEnd = match.range.location + match.range.length
+            if labelEnd < nsLine.length {
+                let after = nsLine.substring(from: labelEnd)
+                if let caseNumber = pickCaseNumberSegment(from: after) {
+                    return caseNumber
+                }
+            }
+
+            for nextIndex in (index + 1)..<min(index + 3, lines.count) {
+                if let caseNumber = pickCaseNumberSegment(from: lines[nextIndex]) {
+                    return caseNumber
+                }
+            }
+        }
+
+        return nil
+    }
+
     /// Pennsylvania Municipal Court / similar layouts put each field as
     /// "Label: Value" — but multi-column scans get OCR'd left-to-right into a
     /// single line, so we need to look BOTH for "Defendant/Respondent: Name"
@@ -257,6 +295,57 @@ struct DefendantNameDetector {
 
     // MARK: - Helpers
 
+    private static func pickCaseNumberSegment(from text: String) -> String? {
+        var slice = text
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ":#-")))
+        guard !slice.isEmpty else { return nil }
+
+        let cutMarkers = [
+            "defendant", "respondent", "plaintiff", "petitioner", "hearing",
+            "address", "date", "filed", "court", "county", "amount", "claim",
+            "complaint", "summons"
+        ]
+
+        let lower = slice.lowercased()
+        for marker in cutMarkers {
+            if let r = lower.range(of: marker) {
+                let cutAt = lower.distance(from: lower.startIndex, to: r.lowerBound)
+                let idx = slice.index(slice.startIndex, offsetBy: cutAt)
+                slice = String(slice[..<idx])
+                break
+            }
+        }
+
+        slice = slice
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",.;:()[]{}")))
+
+        let words = slice.split(whereSeparator: { $0.isWhitespace })
+        var identifierWords: [String] = []
+
+        for word in words {
+            let token = String(word).trimmingCharacters(in: CharacterSet(charactersIn: ",.;:()[]{}"))
+            guard !token.isEmpty else { continue }
+
+            let hasDigit = token.rangeOfCharacter(from: .decimalDigits) != nil
+            let hasIdentifierSeparator = token.rangeOfCharacter(from: CharacterSet(charactersIn: "-./_")) != nil
+            let isShortPrefix = identifierWords.isEmpty && token.count <= 6 && token.rangeOfCharacter(from: .letters) != nil
+
+            if hasDigit || hasIdentifierSeparator || isShortPrefix {
+                identifierWords.append(token)
+            } else {
+                break
+            }
+        }
+
+        let compact = identifierWords.joined(separator: " ")
+        if isPlausibleCaseNumber(compact) {
+            return compact
+        }
+
+        return isPlausibleCaseNumber(slice) ? slice : nil
+    }
+
     /// Check if a string looks like a plausible person or company name
     private static func isPlausibleName(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -270,6 +359,26 @@ struct DefendantNameDetector {
 
         // Must contain at least one letter
         return trimmed.rangeOfCharacter(from: .letters) != nil
+    }
+
+    private static func isPlausibleCaseNumber(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 3, trimmed.count <= 80 else { return false }
+        guard trimmed.rangeOfCharacter(from: .decimalDigits) != nil else { return false }
+
+        let lower = trimmed.lowercased()
+        let skipPrefixes = [
+            "court", "county", "state", "judge", "plaintiff", "defendant",
+            "respondent", "petitioner", "address", "hearing", "date", "page"
+        ]
+        if skipPrefixes.contains(where: { lower.hasPrefix($0) }) { return false }
+
+        let datePattern = #"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$"#
+        if trimmed.range(of: datePattern, options: .regularExpression) != nil {
+            return false
+        }
+
+        return true
     }
 
     /// Clean up a detected name

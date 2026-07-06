@@ -23,12 +23,13 @@ Court systems often deliver service packets as a single scanned PDF containing p
 ## Features
 
 - **Drag-and-drop loading** — drop a PDF onto the window, or click to browse
-- **Auto-detect defendant names** — extracts text via PDFKit and matches court-caption patterns (`vs.`, `Defendant/Respondent`, `Respondent/Defendant`, lines after `vs.`)
+- **Auto-detect defendant names and case numbers** — extracts text via PDFKit and matches court-caption patterns (`vs.`, `Defendant/Respondent`, `Respondent/Defendant`, lines after `vs.`) plus common `Case No.` / `Docket No.` labels
 - **Manual entry fallback** — for scanned/image-based PDFs with no extractable text, enter names per page
+- **Fill suggestions shortcut** — copy detected defendant-name suggestions into blank rows in one click, or accept a single row's suggestion with the arrow button
 - **Page thumbnail preview** — click any page to see a full preview on the right
-- **Smart grouping** — consecutive pages with the same defendant name are combined into one output PDF (Mehdi Hihi on pages 4–5 → one `Mehdi Hihi.pdf`)
+- **Smart grouping** — consecutive pages with the same defendant name and same case number are combined into one output PDF (Mehdi Hihi on pages 4–5 for one case → one `Mehdi Hihi.pdf`)
 - **Apply-down shortcut** — fill consecutive blank pages with the same name from a single row
-- **Filename sanitization** — strips `/ \ : * ? " < > |` and de-duplicates with `Defendant Name - 2.pdf` for separate cases sharing a name
+- **Filename sanitization** — strips `/ \ : * ? " < > |` and appends case numbers, then numeric suffixes when needed, for separate cases sharing a defendant name
 - **Export summary** — preview the full output list (filenames + page ranges + counts) before writing anything
 - **ZIP archive** — auto-bundles all output PDFs into `[original]_split_by_defendant.zip`
 - **Output to Desktop** — creates `split_defendants_[original_name]/` folder for easy access
@@ -65,8 +66,8 @@ open build/Build/Products/Release/DefendantPDFSplitter.app
 
 1. Launch the app — the drop zone appears
 2. Drop a PDF onto the window (or click to browse)
-3. Click **Auto Detect Names** to suggest defendant names from each page's text
-4. Review the table — edit any name, or type names directly for pages where detection failed (scanned/image PDFs)
+3. Click **Auto Detect Fields** to suggest defendant names and case numbers from each page's text
+4. Review the table — click **Fill Suggestions** or the row arrow button to accept detected names, then edit any name or case number as needed
 5. Use the ⬇ button next to a row to fill following blank pages with that name (handy when one defendant spans several pages)
 6. Click **Export PDFs** — review the summary dialog, then confirm
 7. Output appears on your Desktop in `split_defendants_[original_name]/` plus a `[original_name]_split_by_defendant.zip` next to it
@@ -81,18 +82,19 @@ Three strategies run in order; the first match wins:
 | **Court caption** | A `vs.` / `v.` line, then the next non-empty line below it (the standard plaintiff-vs-defendant caption layout) |
 | **Adjacent keyword** | Names on the line above or below `Defendant` / `Respondent` keywords |
 
-Detected names are sanitized (trailing punctuation removed, `et al.` stripped) and filtered against common false positives (`Court`, `County`, `Case`, `Docket`, `Plaintiff`, etc.). The user can always edit any suggestion before exporting.
+Detected names are sanitized (trailing punctuation removed, `et al.` stripped) and filtered against common false positives (`Court`, `County`, `Case`, `Docket`, `Plaintiff`, etc.). Detected case numbers use explicit case/docket labels so unrelated dates or page numbers are not treated as case IDs. The user can always edit any suggestion before exporting.
 
 ## Grouping rules
 
 | PDF input | Output |
 |-----------|--------|
 | 5 pages, all different defendants | 5 PDFs, one per page |
-| 5 pages with pages 4–5 = `Mehdi Hihi` | 4 PDFs (`Mehdi Hihi.pdf` is 2 pages) |
-| 5 pages with pages 1 and 4 both `John Doe` (separate cases) | 5 PDFs (`John Doe.pdf` from page 1, `John Doe - 2.pdf` from page 4) |
+| 5 pages with pages 4–5 = `Mehdi Hihi`, same case number | 4 PDFs (`Mehdi Hihi.pdf` is 2 pages) |
+| 2 consecutive pages both `John Doe`, but case numbers `24-CV-100` and `24-CV-200` | 2 PDFs (`John Doe - 24-CV-100.pdf`, `John Doe - 24-CV-200.pdf`) |
+| 5 pages with pages 1 and 4 both `John Doe` (separate cases) | 5 PDFs (`John Doe - [case number].pdf` when available, otherwise numeric suffixes) |
 | Any page missing a name | Export blocks with a warning bar listing the unassigned page numbers |
 
-Same defendant on **consecutive** pages = one PDF. Same defendant on **non-consecutive** pages = separate PDFs with numeric suffixes (assumed to be different cases).
+Same defendant on **consecutive** pages with the same or blank case number = one PDF. Same defendant on consecutive pages with **different case numbers** = separate PDFs, with the case number appended to the filename when available. Same defendant on **non-consecutive** pages = separate PDFs with case-number or numeric suffixes (assumed to be different cases).
 
 ## Architecture
 
