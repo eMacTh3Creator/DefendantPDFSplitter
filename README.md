@@ -6,7 +6,7 @@
 
 <p align="center">
   Native macOS app that splits multi-defendant court PDFs into separate files, one per defendant.<br>
-  Built for legal/process-service workflows where a single scanned PDF bundles dozens of cases.
+  Review defendant names and case numbers before exporting separate PDFs.
 </p>
 
 <p align="center">
@@ -21,9 +21,9 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License: MIT">
 </p>
 
-## Why
+## What it does
 
-Court systems often deliver service packets as a single scanned PDF containing pages for many unrelated defendants. Manually reviewing each page, splitting the document, and naming each output file is slow and error-prone. Defendant PDF Splitter does it in one pass: drop the PDF in, assign names (auto-detected when possible), and export individually-named PDFs plus a ZIP archive.
+Court packets often contain pages for several defendants and cases. Add the PDF, review the suggested names and case numbers, and correct any entries before exporting separate PDFs and a ZIP archive.
 
 ## Features
 
@@ -32,7 +32,7 @@ Court systems often deliver service packets as a single scanned PDF containing p
 - **Manual entry fallback** — for scanned/image-based PDFs with no extractable text, enter names per page
 - **Fill suggestions shortcut** — copy detected defendant-name suggestions into blank rows in one click, or accept a single row's suggestion with the arrow button
 - **Page thumbnail preview** — click any page to see a full preview on the right
-- **Smart grouping** — consecutive pages with the same defendant name and same case number are combined into one output PDF (Mehdi Hihi on pages 4–5 for one case → one `Mehdi Hihi.pdf`)
+- **Group related pages** — consecutive pages with the same defendant name and same case number are combined into one output PDF (Mehdi Hihi on pages 4–5 for one case → one `Mehdi Hihi.pdf`)
 - **Apply-down shortcut** — fill consecutive blank pages with the same name from a single row
 - **Filename sanitization** — strips `/ \ : * ? " < > |` and appends case numbers, then numeric suffixes when needed, for separate cases sharing a defendant name
 - **Export summary** — preview the full output list (filenames + page ranges + counts) before writing anything
